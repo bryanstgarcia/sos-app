@@ -6,7 +6,45 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+// Context that maps each item's value to its display label so SelectValue
+// can render the correct text without relying on Base UI's `items` prop.
+const SelectLabelsContext = React.createContext<{
+  labels: Map<string, React.ReactNode>
+  register: (value: string, label: React.ReactNode) => void
+  unregister: (value: string) => void
+} | null>(null)
+
+function SelectLabelsProvider({ children }: { children: React.ReactNode }) {
+  const [labels, setLabels] = React.useState<Map<string, React.ReactNode>>(
+    () => new Map()
+  )
+  const register = React.useCallback((value: string, label: React.ReactNode) => {
+    setLabels((prev) => new Map(prev).set(value, label))
+  }, [])
+  const unregister = React.useCallback((value: string) => {
+    setLabels((prev) => {
+      const next = new Map(prev)
+      next.delete(value)
+      return next
+    })
+  }, [])
+  return (
+    <SelectLabelsContext.Provider value={{ labels, register, unregister }}>
+      {children}
+    </SelectLabelsContext.Provider>
+  )
+}
+
+function Select<Value, Multiple extends boolean | undefined = false>({
+  children,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  return (
+    <SelectLabelsProvider>
+      <SelectPrimitive.Root {...props}>{children}</SelectPrimitive.Root>
+    </SelectLabelsProvider>
+  )
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -18,13 +56,23 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+function SelectValue({
+  className,
+  placeholder,
+  ...props
+}: SelectPrimitive.Value.Props) {
+  const ctx = React.useContext(SelectLabelsContext)
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
       className={cn("flex flex-1 text-left", className)}
       {...props}
-    />
+    >
+      {(value: unknown) => {
+        if (value == null || value === "") return placeholder ?? null
+        return ctx?.labels.get(String(value)) ?? String(value)
+      }}
+    </SelectPrimitive.Value>
   )
 }
 
@@ -111,8 +159,24 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
+  label,
+  value,
   ...props
 }: SelectPrimitive.Item.Props) {
+  const ctx = React.useContext(SelectLabelsContext)
+  const displayLabel =
+    label ?? (typeof children === "string" ? children : undefined)
+
+  // Destructure stable callbacks (memoized with [] deps) so the effect
+  // depends on them rather than on ctx itself, which changes reference
+  // every time the labels map updates and would cause an infinite loop.
+  const { register, unregister } = ctx ?? {}
+  React.useEffect(() => {
+    if (value == null || displayLabel === undefined) return
+    register?.(String(value), displayLabel)
+    return () => unregister?.(String(value))
+  }, [value, displayLabel, register, unregister])
+
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -120,6 +184,8 @@ function SelectItem({
         "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
+      value={value}
+      label={displayLabel}
       {...props}
     >
       <SelectPrimitive.ItemText className="flex flex-1 shrink-0 gap-2 whitespace-nowrap">
